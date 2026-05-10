@@ -51,6 +51,7 @@
         max-height: calc(100vh - 48px);
         max-height: calc(100dvh - 48px);
         padding: 18px;
+        box-sizing: border-box;
         border: 1px solid var(--panel-border);
         border-radius: 20px;
         background: var(--panel);
@@ -240,13 +241,13 @@
 
       @media (max-width: 720px) {
         .panel {
-          left: 12px;
-          top: 12px;
-          width: calc(100vw - 24px);
-          max-height: calc(100vh - 24px);
-          max-height: calc(100dvh - 24px);
+          left: 0;
+          top: 0;
+          width: 100vw;
+          max-height: 100vh;
+          max-height: 100dvh;
           padding: 14px;
-          border-radius: 18px;
+          border-radius: 0;
         }
 
         h1 {
@@ -375,6 +376,7 @@
       const SAMPLE_RATE = 16000;
       const PARTIAL_INTERVAL_MS = 1200;
       const PRE_ROLL_SECONDS = 1.0;
+      const isTouchLikeDevice = window.matchMedia?.("(pointer: coarse)")?.matches || navigator.maxTouchPoints > 0;
 
       let head = null;
       let audioContext = null;
@@ -413,19 +415,19 @@
           return;
         }
 
-        setMode("thinking", "点头思考中");
+        setMode("thinking", "挠头思考中");
 
         if (thinkingGestureTimer) {
           window.clearInterval(thinkingGestureTimer);
         }
 
-        head.playGesture("yes", 1.3, false, 450);
+        head.playGesture("scratchhead", 2.2, false, 500);
         thinkingGestureTimer = window.setInterval(() => {
           if (!head || !waitingForReply || speaking) {
             return;
           }
-          head.playGesture("yes", 1.3, false, 450);
-        }, 1700);
+          head.playGesture("scratchhead", 2.2, false, 500);
+        }, 1600);
       }
 
       function stopThinkingAnimation() {
@@ -587,7 +589,7 @@
             cameraRotateEnable: true,
             cameraPanEnable: false,
             cameraZoomEnable: false,
-            modelPixelRatio: Math.min(window.devicePixelRatio || 1, 1.5),
+            modelPixelRatio: isTouchLikeDevice ? 1 : 1.5,
             ttsEndpoint: "/api/tts",
             ttsLang: "en-US",
             ttsVoice: "local-qwen3-tts",
@@ -703,13 +705,9 @@
               turnActive = true;
               waitingForReply = true;
               turnBuffer = preRollBuffer.slice();
-              transcribeTimer = window.setInterval(() => {
-                if (turnActive) {
-                  void transcribeTurn(false);
-                }
-              }, PARTIAL_INTERVAL_MS);
+              transcriptEl.textContent = "正在转写...";
               startThinkingAnimation();
-              setStatus("检测到语音输入，正在实时转写...");
+              setStatus("检测到语音输入，正在等待句子结束...");
             }
 
             if (state === "stop") {
@@ -797,7 +795,7 @@
               setStatus("对话已停止。");
             }
           }, restartDelay);
-          } catch (error) {
+        } catch (error) {
           console.error(error);
           setStatus(`处理失败：${error?.message || error}`);
           waitingForReply = false;
