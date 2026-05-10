@@ -17,8 +17,8 @@ const CERT_CRT_PATH = path.join(CERT_DIR, 'server.crt');
 
 const CONFIG = {
   whisperBin: process.env.WHISPER_BIN || path.join(ROOT, 'whisper.cpp', 'build', 'bin', 'whisper-cli'),
-  whisperModel: process.env.WHISPER_MODEL || path.join(ROOT, 'whisper.cpp', 'models', 'ggml-tiny.en.bin'),
-  whisperLanguage: process.env.WHISPER_LANGUAGE || 'en',
+  whisperModel: process.env.WHISPER_MODEL || path.join(ROOT, 'whisper.cpp', 'models', 'ggml-small.bin'),
+  whisperLanguage: process.env.WHISPER_LANGUAGE || 'auto',
   whisperArgs: parseJsonEnv('WHISPER_ARGS', null),
   ttsBin: process.env.TTS_BIN || path.join(ROOT, 'qwen3-tts.cpp', 'build', 'qwen3-tts-cli'),
   ttsModel: process.env.TTS_MODEL || path.join(ROOT, 'qwen3-tts.cpp', 'models'),

@@ -63,6 +63,19 @@ TTS_ARGS='["-m","{model}","-t","{text}","-o","{output}","-l","{language}"]'
 
 `/api/chat` falls back to an echo-style reply unless `CHAT_COMMAND` is set.
 
+## Whisper model
+
+The default STT model is now multilingual `ggml-small.bin`, and the language defaults to `auto` so Chinese input is handled better.
+
+If you do not already have that model, download it with:
+
+```bash
+cd whisper.cpp/models
+./download-ggml-model.sh small
+```
+
+If your machine is weaker and you need a smaller model, you can override `WHISPER_MODEL` with `ggml-base.bin` or another multilingual model.
+
 ## Ports
 
 - `HOST` defaults to `0.0.0.0`
