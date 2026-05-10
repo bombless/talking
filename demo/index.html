@@ -233,6 +233,11 @@
         box-shadow: 0 0 0 4px rgba(125, 211, 252, 0.14);
       }
 
+      .dot.thinking {
+        background: var(--warn);
+        box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.16);
+      }
+
       @media (max-width: 720px) {
         .panel {
           left: 12px;
@@ -386,6 +391,8 @@
       let speaking = false;
       let conversationArmed = false;
       let pendingAutoRestart = false;
+      let waitingForReply = false;
+      let thinkingGestureTimer = null;
       let availableMicDevices = [];
       let availableChatProviders = [
         { id: "codex", label: "Codex" },
@@ -399,6 +406,34 @@
       function setMode(mode, label) {
         stateTextEl.textContent = label;
         stateDotEl.className = `dot ${mode || ""}`.trim();
+      }
+
+      function startThinkingAnimation() {
+        if (!head?.playGesture || !waitingForReply || speaking) {
+          return;
+        }
+
+        setMode("thinking", "点头思考中");
+
+        if (thinkingGestureTimer) {
+          window.clearInterval(thinkingGestureTimer);
+        }
+
+        head.playGesture("yes", 1.3, false, 450);
+        thinkingGestureTimer = window.setInterval(() => {
+          if (!head || !waitingForReply || speaking) {
+            return;
+          }
+          head.playGesture("yes", 1.3, false, 450);
+        }, 1700);
+      }
+
+      function stopThinkingAnimation() {
+        if (thinkingGestureTimer) {
+          window.clearInterval(thinkingGestureTimer);
+          thinkingGestureTimer = null;
+        }
+        head?.stopGesture?.(300);
       }
 
       function setBridge(ok, text) {
@@ -653,14 +688,15 @@
           head.startListening(analyser, {}, (state) => {
             if (state === "start") {
               turnActive = true;
+              waitingForReply = true;
               turnBuffer = preRollBuffer.slice();
               transcribeTimer = window.setInterval(() => {
                 if (turnActive) {
                   void transcribeTurn(false);
                 }
               }, PARTIAL_INTERVAL_MS);
-              setMode("live", "正在聆听");
-              setStatus("检测到语音输入...");
+              startThinkingAnimation();
+              setStatus("检测到语音输入，正在实时转写...");
             }
 
             if (state === "stop") {
@@ -700,6 +736,8 @@
           transcriptEl.textContent = transcript || "（空）";
           setStatus("正在生成回复...");
           if (!transcript) {
+            waitingForReply = false;
+            stopThinkingAnimation();
             setMode("", "待机");
             return;
           }
@@ -708,12 +746,17 @@
           const reply = String(chat.reply || "").trim();
           replyEl.textContent = reply || "（空）";
           if (!reply) {
+            waitingForReply = false;
+            stopThinkingAnimation();
             setMode("", "待机");
             return;
           }
 
           pendingAutoRestart = captureEnabled;
           stopVoice(true);
+
+          waitingForReply = false;
+          stopThinkingAnimation();
 
           speaking = true;
           setMode("speaking", "正在播报");
@@ -741,6 +784,8 @@
         } catch (error) {
           console.error(error);
           setStatus(`处理失败：${error?.message || error}`);
+          waitingForReply = false;
+          stopThinkingAnimation();
           setMode("", "待机");
         } finally {
           turnBuffer = [];
@@ -754,6 +799,8 @@
         await ensureAudio();
         captureEnabled = true;
         pendingAutoRestart = false;
+        waitingForReply = false;
+        stopThinkingAnimation();
         setMode("live", "开始监听");
         setStatus("麦克风已开启。请说话。");
       }
@@ -763,6 +810,8 @@
         pendingAutoRestart = false;
         turnActive = false;
         speaking = false;
+        waitingForReply = false;
+        stopThinkingAnimation();
         if (transcribeTimer) {
           window.clearInterval(transcribeTimer);
           transcribeTimer = null;
