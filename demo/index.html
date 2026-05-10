@@ -184,6 +184,32 @@
         border: 1px solid rgba(255, 255, 255, 0.08);
       }
 
+      .hidden {
+        display: none !important;
+      }
+
+      .field {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 10px 12px;
+        border-radius: 12px;
+        background: rgba(255,255,255,0.06);
+        color: var(--text);
+        border: 1px solid rgba(255,255,255,0.12);
+        font: inherit;
+      }
+
+      .field:focus {
+        outline: none;
+        border-color: rgba(125, 211, 252, 0.65);
+        box-shadow: 0 0 0 3px rgba(125, 211, 252, 0.12);
+      }
+
+      textarea.field {
+        min-height: 92px;
+        resize: vertical;
+      }
+
       .label {
         margin-bottom: 6px;
         color: var(--muted);
@@ -293,7 +319,7 @@
           <h1>本机数字人语音链路</h1>
           <button id="collapseBtn" class="secondary" style="padding: 8px 12px;">收起</button>
         </div>
-        <p class="sub">麦克风输入进 <code>whisper.cpp</code>，回复文本交给本地 TTS，再由 <code>TalkingHead</code> 做口型同步。</p>
+        <p class="sub">有麦克风时走语音输入，没有麦克风时直接文字输入，回复文本交给本地 TTS，再由 <code>TalkingHead</code> 做口型同步。</p>
 
         <div class="row">
           <span class="pill"><span id="stateDot" class="dot"></span><span id="stateText">待机</span></span>
@@ -304,11 +330,15 @@
           <div class="card">
             <div class="label">麦克风设备</div>
             <div class="row">
-              <select id="micDevice" style="flex:1; min-width: 220px; padding: 10px 12px; border-radius: 12px; background: rgba(255,255,255,0.06); color: var(--text); border: 1px solid rgba(255,255,255,0.12);">
+              <select id="micDevice" class="field" style="flex:1; min-width: 220px;">
                 <option value="">默认设备</option>
               </select>
               <button id="refreshMic" class="secondary">刷新设备</button>
             </div>
+          </div>
+          <div id="textEntryCard" class="card hidden">
+            <div class="label">文字输入</div>
+            <textarea id="textInput" class="field" placeholder="没有麦克风时，直接在这里输入文字。Shift+Enter 换行，Enter 发送。"></textarea>
           </div>
           <div class="row">
             <button id="startVoice">开始对话</button>
@@ -334,7 +364,7 @@
           <div class="card">
             <div class="label">回复引擎</div>
             <div class="row">
-              <select id="chatProvider" style="flex:1; min-width: 220px; padding: 10px 12px; border-radius: 12px; background: rgba(255,255,255,0.06); color: var(--text); border: 1px solid rgba(255,255,255,0.12);">
+              <select id="chatProvider" class="field" style="flex:1; min-width: 220px;">
                 <option value="codex">Codex</option>
                 <option value="opencode">OpenCode</option>
               </select>
@@ -372,6 +402,12 @@
       const collapseBtnEl = document.getElementById("collapseBtn");
       const panelToggleEl = document.getElementById("panelToggle");
       const avatarNode = document.getElementById("avatar");
+      const startVoiceBtn = document.getElementById("startVoice");
+      const stopVoiceBtn = document.getElementById("stopVoice");
+      const clearBtn = document.getElementById("clear");
+      const refreshMicBtn = document.getElementById("refreshMic");
+      const textEntryCardEl = document.getElementById("textEntryCard");
+      const textInputEl = document.getElementById("textInput");
 
       const SAMPLE_RATE = 16000;
       const PARTIAL_INTERVAL_MS = 1200;
@@ -396,6 +432,7 @@
       let thinkingGestureTimer = null;
       let conversationHistory = [];
       let availableMicDevices = [];
+      let inputMode = "voice";
       let availableChatProviders = [
         { id: "codex", label: "Codex" },
         { id: "opencode", label: "OpenCode" },
@@ -459,6 +496,26 @@
       function setMicStatus(message) {
         const current = micDeviceEl.options[micDeviceEl.selectedIndex]?.textContent || "默认设备";
         micDeviceEl.title = message || current;
+      }
+
+      function setInputMode(mode, message = "") {
+        inputMode = mode === "text" ? "text" : "voice";
+        const textMode = inputMode === "text";
+
+        textEntryCardEl.classList.toggle("hidden", !textMode);
+        startVoiceBtn.textContent = textMode ? "发送文本" : "开始对话";
+        startVoiceBtn.title = textMode ? "直接发送输入框中的文字" : "开始麦克风对话";
+
+        if (textMode) {
+          setMode("", "文本输入");
+          autoContinueConversation = false;
+          waitingForReply = false;
+          stopThinkingAnimation();
+          setStatus(message || "未检测到麦克风，已切换为文字输入。");
+          window.setTimeout(() => textInputEl.focus(), 0);
+        } else if (message) {
+          setStatus(message);
+        }
       }
 
       function setChatProvider(provider, persist = true) {
@@ -616,12 +673,13 @@
         const supportError = getMicSupportError();
         if (supportError) {
           setMicStatus(supportError);
-          setStatus(supportError);
+          setInputMode("text", supportError);
           return;
         }
 
         if (typeof navigator.mediaDevices.enumerateDevices !== "function") {
           setMicStatus("当前浏览器不支持设备枚举");
+          setInputMode("text", "当前浏览器不支持设备枚举，已切换为文字输入。");
           return;
         }
 
@@ -636,8 +694,10 @@
 
         if (!availableMicDevices.length) {
           setMicStatus("未检测到麦克风设备");
+          setInputMode("text", "未检测到麦克风设备，已切换为文字输入。");
         } else {
           setMicStatus(`检测到 ${availableMicDevices.length} 个麦克风设备`);
+          setInputMode("voice");
         }
       }
 
@@ -734,6 +794,79 @@
         return String(data.text || "").trim();
       }
 
+      async function processUserTurn(text, { fromVoice = false } = {}) {
+        const transcript = String(text || "").trim();
+        transcriptEl.textContent = transcript || "（空）";
+
+        if (!transcript) {
+          waitingForReply = false;
+          stopThinkingAnimation();
+          setMode("", inputMode === "text" ? "文本输入" : "待机");
+          return;
+        }
+
+        waitingForReply = true;
+        startThinkingAnimation();
+        setStatus("正在生成回复...");
+
+        const chat = await fetchJson("/api/chat", {
+          text: transcript,
+          provider: chatProviderEl.value,
+          history: conversationHistory,
+        });
+        const reply = String(chat.reply || "").trim();
+        replyEl.textContent = reply || "（空）";
+
+        if (!reply) {
+          waitingForReply = false;
+          stopThinkingAnimation();
+          setMode("", inputMode === "text" ? "文本输入" : "待机");
+          if (inputMode === "text") {
+            textInputEl.focus();
+          }
+          return;
+        }
+
+        if (fromVoice) {
+          stopAudioCapture(true);
+        }
+
+        pushConversation("user", transcript);
+        pushConversation("assistant", reply);
+
+        waitingForReply = false;
+        stopThinkingAnimation();
+
+        speaking = true;
+        setMode("speaking", "正在播报");
+        setStatus("正在调用本地 TTS...");
+        await head.speakText(reply, {
+          avatarMood: "neutral",
+          ttsLang: "en-US",
+          ttsVoice: "local-qwen3-tts",
+        });
+
+        const restartDelay = Math.max(2500, reply.length * 70);
+        window.setTimeout(() => {
+          speaking = false;
+          if (fromVoice) {
+            if (autoContinueConversation && !captureEnabled) {
+              void startVoice();
+            } else if (captureEnabled) {
+              setMode("live", "重新聆听");
+              setStatus("可继续说话。");
+            } else {
+              setMode("", "待机");
+              setStatus("对话已停止。");
+            }
+          } else {
+            setMode("", "文本输入");
+            setStatus("可继续输入。");
+            textInputEl.focus();
+          }
+        }, restartDelay);
+      }
+
       async function finalizeTurn() {
         if (!turnActive) return;
         turnActive = false;
@@ -744,57 +877,7 @@
 
         try {
           const transcript = await transcribeTurn(true);
-          transcriptEl.textContent = transcript || "（空）";
-          setStatus("正在生成回复...");
-          if (!transcript) {
-            waitingForReply = false;
-            stopThinkingAnimation();
-            setMode("", "待机");
-            return;
-          }
-
-          const chat = await fetchJson("/api/chat", {
-            text: transcript,
-            provider: chatProviderEl.value,
-            history: conversationHistory,
-          });
-          const reply = String(chat.reply || "").trim();
-          replyEl.textContent = reply || "（空）";
-          if (!reply) {
-            waitingForReply = false;
-            stopThinkingAnimation();
-            setMode("", "待机");
-            return;
-          }
-
-          waitingForReply = false;
-          stopThinkingAnimation();
-          pushConversation("user", transcript);
-          pushConversation("assistant", reply);
-          stopAudioCapture(true);
-
-          speaking = true;
-          setMode("speaking", "正在播报");
-          setStatus("正在调用本地 TTS...");
-          await head.speakText(reply, {
-            avatarMood: "neutral",
-            ttsLang: "en-US",
-            ttsVoice: "local-qwen3-tts",
-          });
-
-          const restartDelay = Math.max(2500, reply.length * 70);
-          window.setTimeout(() => {
-            speaking = false;
-            if (autoContinueConversation && !captureEnabled) {
-              void startVoice();
-            } else if (captureEnabled) {
-              setMode("live", "重新聆听");
-              setStatus("可继续说话。");
-            } else {
-              setMode("", "待机");
-              setStatus("对话已停止。");
-            }
-          }, restartDelay);
+          await processUserTurn(transcript, { fromVoice: true });
         } catch (error) {
           console.error(error);
           setStatus(`处理失败：${error?.message || error}`);
@@ -853,6 +936,11 @@
       }
 
       async function startVoice() {
+        if (inputMode === "text") {
+          await submitTextTurn();
+          return;
+        }
+
         if (captureEnabled) return;
         await ensureAudio();
         captureEnabled = true;
@@ -861,6 +949,27 @@
         stopThinkingAnimation();
         setMode("live", "开始监听");
         setStatus("麦克风已开启。请说话。");
+      }
+
+      async function submitTextTurn() {
+        const text = textInputEl.value.trim();
+        if (!text) {
+          setStatus("请输入文字后再发送。");
+          textInputEl.focus();
+          return;
+        }
+
+        textInputEl.value = "";
+        try {
+          await processUserTurn(text, { fromVoice: false });
+        } catch (error) {
+          console.error(error);
+          setStatus(`处理失败：${error?.message || error}`);
+          waitingForReply = false;
+          stopThinkingAnimation();
+          setMode("", "文本输入");
+          textInputEl.focus();
+        }
       }
 
       function stopVoice(silent = false) {
@@ -879,13 +988,18 @@
       function clearTranscript() {
         transcriptEl.textContent = "尚未开始。";
         replyEl.textContent = "尚未生成。";
+        textInputEl.value = "";
         resetConversationHistory();
-        setStatus("已清空文本。");
+        setStatus(inputMode === "text" ? "已清空文本输入。" : "已清空文本。");
       }
 
-      document.getElementById("startVoice").addEventListener("click", async () => {
+      startVoiceBtn.addEventListener("click", async () => {
         try {
-          await startVoice();
+          if (inputMode === "text") {
+            await submitTextTurn();
+          } else {
+            await startVoice();
+          }
         } catch (error) {
           console.error(error);
           const message = String(error?.message || error || "");
@@ -899,11 +1013,11 @@
         }
       });
 
-      document.getElementById("stopVoice").addEventListener("click", () => {
+      stopVoiceBtn.addEventListener("click", () => {
         stopVoice(false);
       });
 
-      document.getElementById("clear").addEventListener("click", () => {
+      clearBtn.addEventListener("click", () => {
         clearTranscript();
       });
 
@@ -912,7 +1026,7 @@
         setStatus(`已切换为 ${chatProviderHintEl.textContent.replace(/^当前\s*/, "")}。`);
       });
 
-      document.getElementById("refreshMic").addEventListener("click", async () => {
+      refreshMicBtn.addEventListener("click", async () => {
         try {
           await refreshMicDevices();
         } catch (error) {
@@ -923,6 +1037,13 @@
 
       micDeviceEl.addEventListener("change", () => {
         setMicStatus("已选择麦克风");
+      });
+
+      textInputEl.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" && !event.shiftKey) {
+          event.preventDefault();
+          void submitTextTurn();
+        }
       });
 
       collapseBtnEl.addEventListener("click", () => {
@@ -953,6 +1074,9 @@
       await loadBridgeState();
       await loadAvatar();
       await refreshMicDevices();
+      if (inputMode === "text") {
+        textInputEl.focus();
+      }
       setPanelCollapsed(false);
       setMode("", "待机");
     </script>
