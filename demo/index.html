@@ -358,6 +358,22 @@
         panelToggleEl.title = collapsed ? "展开面板" : "展开面板";
       }
 
+      function getMicSupportError() {
+        if (!window.isSecureContext) {
+          return "当前页面不是安全上下文，浏览器不会暴露麦克风 API。请用 HTTPS 打开，或在本机用 localhost 访问。局域网 IP 的 http 访问通常不行。";
+        }
+
+        if (!navigator.mediaDevices) {
+          return "当前浏览器没有提供 mediaDevices 接口，无法访问麦克风。请换支持 WebRTC 的现代浏览器。";
+        }
+
+        if (typeof navigator.mediaDevices.getUserMedia !== "function") {
+          return "当前浏览器没有提供 getUserMedia，无法访问麦克风。";
+        }
+
+        return null;
+      }
+
       function downsampleBuffer(buffer, inputSampleRate, targetSampleRate) {
         if (targetSampleRate === inputSampleRate) {
           return Float32Array.from(buffer);
@@ -466,7 +482,14 @@
         availableMicDevices = [];
         micDeviceEl.innerHTML = '<option value="">默认设备</option>';
 
-        if (!navigator.mediaDevices?.enumerateDevices) {
+        const supportError = getMicSupportError();
+        if (supportError) {
+          setMicStatus(supportError);
+          setStatus(supportError);
+          return;
+        }
+
+        if (typeof navigator.mediaDevices.enumerateDevices !== "function") {
           setMicStatus("当前浏览器不支持设备枚举");
           return;
         }
@@ -489,6 +512,12 @@
 
       async function ensureAudio() {
         if (audioContext) return;
+
+        const supportError = getMicSupportError();
+        if (supportError) {
+          throw new Error(supportError);
+        }
+
         audioContext = new AudioContext();
         await audioContext.resume();
 
@@ -708,6 +737,8 @@
           const message = String(error?.message || error || "");
           if (/Requested device not found|NotFoundError/i.test(message)) {
             setStatus("启动失败：浏览器没有找到可用麦克风。请先点击“刷新设备”，检查系统输入设备，或在下拉框里手动选择麦克风后重试。");
+          } else if (/secure context|mediaDevices|getUserMedia/i.test(message)) {
+            setStatus(`启动失败：${message}`);
           } else {
             setStatus(`启动失败：${message}`);
           }

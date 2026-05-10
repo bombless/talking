@@ -24,13 +24,19 @@ git submodule update --init --recursive
 npm run dev
 ```
 
+The bridge starts both:
+
+- `https://0.0.0.0:10443/` for the app
+- `http://0.0.0.0:3000/` for redirecting to HTTPS
+
 Open:
 
 ```text
-http://127.0.0.1:3000/
+https://127.0.0.1:10443/
 ```
 
-For LAN testing, open `http://<this-machine-lan-ip>:3000/` from other devices.
+For LAN testing, open `https://<this-machine-lan-ip>:10443/` from other devices.
+The server creates a self-signed certificate on startup, so your browser will likely show a warning the first time.
 
 ## Expected local paths
 
@@ -56,3 +62,10 @@ TTS_ARGS='["-m","{model}","-t","{text}","-o","{output}","-l","{language}"]'
 ```
 
 `/api/chat` falls back to an echo-style reply unless `CHAT_COMMAND` is set.
+
+## Ports
+
+- `HOST` defaults to `0.0.0.0`
+- `PORT` defaults to `3000`
+- `HTTPS_PORT` defaults to `10443`
+- `CERT_DIR` defaults to a temp directory under your system

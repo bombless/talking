@@ -1,13 +1,19 @@
 import http from 'node:http';
-import { spawn } from 'node:child_process';
+import https from 'node:https';
+import { execFileSync, spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { networkInterfaces } from 'node:os';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
-const PORT = Number.parseInt(process.env.PORT || '3000', 10);
+const HTTP_PORT = Number.parseInt(process.env.PORT || '3000', 10);
+const HTTPS_PORT = Number.parseInt(process.env.HTTPS_PORT || '10443', 10);
 const HOST = process.env.HOST || '0.0.0.0';
+const CERT_DIR = process.env.CERT_DIR || path.join(os.tmpdir(), 'talkinghead-local-https');
+const CERT_KEY_PATH = path.join(CERT_DIR, 'server.key');
+const CERT_CRT_PATH = path.join(CERT_DIR, 'server.crt');
 
 const CONFIG = {
   whisperBin: process.env.WHISPER_BIN || path.join(ROOT, 'whisper.cpp', 'build', 'bin', 'whisper-cli'),
@@ -44,6 +50,57 @@ function parseJsonEnv(name, fallback) {
   } catch {
     return fallback;
   }
+}
+
+function getLocalIpAddresses() {
+  const addrs = new Set(['127.0.0.1', 'localhost']);
+  for (const infos of Object.values(networkInterfaces())) {
+    for (const info of infos || []) {
+      if (info.family === 'IPv4' && !info.internal) {
+        addrs.add(info.address);
+      }
+    }
+  }
+  return [...addrs];
+}
+
+function escapeOpenSslSanValue(value) {
+  return String(value).replace(/,/g, '\\,');
+}
+
+async function ensureHttpsCertificate() {
+  await fs.mkdir(CERT_DIR, { recursive: true });
+
+  const sanEntries = getLocalIpAddresses().map((ip) => {
+    if (/^\d+\.\d+\.\d+\.\d+$/.test(ip)) {
+      return `IP:${ip}`;
+    }
+    return `DNS:${ip}`;
+  });
+  const san = sanEntries.map(escapeOpenSslSanValue).join(',');
+
+  execFileSync('openssl', [
+    'req',
+    '-x509',
+    '-newkey',
+    'rsa:2048',
+    '-nodes',
+    '-keyout',
+    CERT_KEY_PATH,
+    '-out',
+    CERT_CRT_PATH,
+    '-days',
+    '3650',
+    '-subj',
+    '/CN=TalkingHead Local Bridge',
+    '-addext',
+    `subjectAltName=${san}`,
+  ], { stdio: 'ignore' });
+
+  return {
+    key: await fs.readFile(CERT_KEY_PATH),
+    cert: await fs.readFile(CERT_CRT_PATH),
+  };
 }
 
 function applyTemplate(value, vars) {
@@ -328,7 +385,7 @@ async function serveStatic(req, res, pathname) {
   }
 }
 
-const server = http.createServer(async (req, res) => {
+async function handleRequest(req, res) {
   const url = new URL(req.url || '/', 'http://127.0.0.1');
   const { pathname } = url;
 
@@ -411,7 +468,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   send(res, 405, 'Method not allowed');
-});
+}
 
 function readBinaryBody(req) {
   return new Promise((resolve, reject) => {
@@ -422,8 +479,38 @@ function readBinaryBody(req) {
   });
 }
 
-server.listen(PORT, HOST, () => {
-  console.log(`Local voice bridge running at http://${HOST}:${PORT}`);
-  console.log(`whisper.cpp: ${CONFIG.whisperBin}`);
-  console.log(`qwen3-tts.cpp: ${CONFIG.ttsBin}`);
+async function main() {
+  const httpsOptions = await ensureHttpsCertificate();
+
+  const httpsServer = https.createServer(httpsOptions, handleRequest);
+  const httpServer = http.createServer((req, res) => {
+    const hostHeader = req.headers.host || `${HOST}:${HTTP_PORT}`;
+    const hostname = hostHeader.split(':')[0] || HOST;
+    const location = `https://${hostname}:${HTTPS_PORT}${req.url || '/'}`;
+    res.writeHead(301, { Location: location });
+    res.end();
+  });
+
+  httpServer.on('error', (error) => {
+    if (error?.code === 'EADDRINUSE') {
+      console.warn(`HTTP redirect port ${HTTP_PORT} is already in use, continuing with HTTPS only.`);
+      return;
+    }
+    console.error(error);
+    process.exit(1);
+  });
+
+  httpsServer.listen(HTTPS_PORT, HOST, () => {
+    console.log(`Local voice bridge running at https://${HOST}:${HTTPS_PORT}`);
+    console.log(`HTTP redirect running at http://${HOST}:${HTTP_PORT}`);
+    console.log(`whisper.cpp: ${CONFIG.whisperBin}`);
+    console.log(`qwen3-tts.cpp: ${CONFIG.ttsBin}`);
+  });
+
+  httpServer.listen(HTTP_PORT, HOST);
+}
+
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
 });
