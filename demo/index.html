@@ -389,10 +389,10 @@
       let preRollBuffer = [];
       let preRollSampleCount = 0;
       let speaking = false;
-      let conversationArmed = false;
-      let pendingAutoRestart = false;
+      let autoContinueConversation = false;
       let waitingForReply = false;
       let thinkingGestureTimer = null;
+      let conversationHistory = [];
       let availableMicDevices = [];
       let availableChatProviders = [
         { id: "codex", label: "Codex" },
@@ -434,6 +434,19 @@
           thinkingGestureTimer = null;
         }
         head?.stopGesture?.(300);
+      }
+
+      function resetConversationHistory() {
+        conversationHistory = [];
+      }
+
+      function pushConversation(role, content) {
+        const text = String(content || "").trim();
+        if (!text) return;
+        conversationHistory.push({ role, content: text });
+        if (conversationHistory.length > 12) {
+          conversationHistory = conversationHistory.slice(-12);
+        }
       }
 
       function setBridge(ok, text) {
@@ -742,7 +755,11 @@
             return;
           }
 
-          const chat = await fetchJson("/api/chat", { text: transcript, provider: chatProviderEl.value });
+          const chat = await fetchJson("/api/chat", {
+            text: transcript,
+            provider: chatProviderEl.value,
+            history: conversationHistory,
+          });
           const reply = String(chat.reply || "").trim();
           replyEl.textContent = reply || "（空）";
           if (!reply) {
@@ -752,11 +769,11 @@
             return;
           }
 
-          pendingAutoRestart = captureEnabled;
-          stopVoice(true);
-
           waitingForReply = false;
           stopThinkingAnimation();
+          pushConversation("user", transcript);
+          pushConversation("assistant", reply);
+          stopAudioCapture(true);
 
           speaking = true;
           setMode("speaking", "正在播报");
@@ -770,8 +787,7 @@
           const restartDelay = Math.max(2500, reply.length * 70);
           window.setTimeout(() => {
             speaking = false;
-            if (pendingAutoRestart && !captureEnabled) {
-              pendingAutoRestart = false;
+            if (autoContinueConversation && !captureEnabled) {
               void startVoice();
             } else if (captureEnabled) {
               setMode("live", "重新聆听");
@@ -781,7 +797,7 @@
               setStatus("对话已停止。");
             }
           }, restartDelay);
-        } catch (error) {
+          } catch (error) {
           console.error(error);
           setStatus(`处理失败：${error?.message || error}`);
           waitingForReply = false;
@@ -794,24 +810,10 @@
         }
       }
 
-      async function startVoice() {
-        if (captureEnabled) return;
-        await ensureAudio();
-        captureEnabled = true;
-        pendingAutoRestart = false;
-        waitingForReply = false;
-        stopThinkingAnimation();
-        setMode("live", "开始监听");
-        setStatus("麦克风已开启。请说话。");
-      }
-
-      function stopVoice(silent = false) {
+      function stopAudioCapture(preserveConversation = false) {
         captureEnabled = false;
-        pendingAutoRestart = false;
         turnActive = false;
-        speaking = false;
-        waitingForReply = false;
-        stopThinkingAnimation();
+        head?.stopListening?.();
         if (transcribeTimer) {
           window.clearInterval(transcribeTimer);
           transcribeTimer = null;
@@ -819,7 +821,6 @@
         turnBuffer = [];
         preRollBuffer = [];
         preRollSampleCount = 0;
-        head?.stopListening?.();
 
         if (processor) {
           processor.disconnect();
@@ -847,6 +848,30 @@
           audioContext = null;
         }
 
+        if (!preserveConversation) {
+          autoContinueConversation = false;
+          resetConversationHistory();
+        }
+      }
+
+      async function startVoice() {
+        if (captureEnabled) return;
+        await ensureAudio();
+        captureEnabled = true;
+        autoContinueConversation = true;
+        waitingForReply = false;
+        stopThinkingAnimation();
+        setMode("live", "开始监听");
+        setStatus("麦克风已开启。请说话。");
+      }
+
+      function stopVoice(silent = false) {
+        speaking = false;
+        waitingForReply = false;
+        stopThinkingAnimation();
+        head?.stopListening?.();
+        stopAudioCapture(false);
+
         setMode("", "待机");
         if (!silent) {
           setStatus("已停止。");
@@ -856,6 +881,7 @@
       function clearTranscript() {
         transcriptEl.textContent = "尚未开始。";
         replyEl.textContent = "尚未生成。";
+        resetConversationHistory();
         setStatus("已清空文本。");
       }
 

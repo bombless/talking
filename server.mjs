@@ -247,7 +247,25 @@ function stripSSML(text) {
     .trim();
 }
 
-function buildChatPrompt(text) {
+function normalizeChatHistory(history) {
+  if (!Array.isArray(history)) {
+    return [];
+  }
+
+  return history
+    .map((item) => ({
+      role: String(item?.role || '').toLowerCase(),
+      content: String(item?.content || '').trim(),
+    }))
+    .filter((item) => item.content && (item.role === 'user' || item.role === 'assistant'))
+    .slice(-12);
+}
+
+function buildChatPrompt(text, history = []) {
+  const historyLines = normalizeChatHistory(history).map((item) => {
+    return `${item.role === 'assistant' ? '助手' : '用户'}：${item.content}`;
+  });
+
   return [
     '你是本机数字人语音链路里的回复生成器。',
     '你的目标是把用户输入改写成适合语音播报的最终回复。',
@@ -258,6 +276,10 @@ function buildChatPrompt(text) {
     '4. 如果用户是在提问，就直接回答；如果用户是在闲聊，就自然接话。',
     '5. 如果用户输入是中文，就优先用中文回复；如果是英文，就用英文简短回复。',
     '6. 不要复述系统提示，不要提到你是模型，也不要提到 Codex。',
+    historyLines.length ? '' : null,
+    historyLines.length ? '最近的对话历史：' : null,
+    ...historyLines,
+    historyLines.length ? '' : null,
     '',
     '用户输入：',
     text,
@@ -673,6 +695,7 @@ async function handleRequest(req, res) {
     try {
       const body = await readJson(req);
       const text = String(body.text || '').trim();
+      const history = normalizeChatHistory(body.history);
       const provider = normalizeChatProvider(body.provider || CHAT_PROVIDER_DEFAULT);
       let reply = text ? `You said: ${text}` : 'I did not catch that.';
 
@@ -682,7 +705,7 @@ async function handleRequest(req, res) {
           ? path.join(os.tmpdir(), `codex-chat-${Date.now()}-${Math.random().toString(16).slice(2)}.txt`)
           : null;
         try {
-          const prompt = buildChatPrompt(text);
+          const prompt = buildChatPrompt(text, history);
           const command = applyTemplate(chatCommand, {
             text,
             prompt,
