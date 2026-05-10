@@ -52,9 +52,12 @@ The bridge is configurable via environment variables:
 - `TTS_MODEL`
 - `TTS_ARGS`
 - `TTS_STDIN`
-- `CHAT_COMMAND`
+- `CHAT_PROVIDER_DEFAULT`
+- `CHAT_COMMAND` for legacy Codex override
+- `CODEX_CHAT_COMMAND`
+- `OPENCODE_CHAT_COMMAND`
 
-By default, `/api/chat` calls `codex exec` in read-only mode and writes the final reply to a temporary file.
+By default, `/api/chat` uses `codex exec` and writes the final reply to a temporary file. You can switch to `opencode` in the page UI.
 The prompt is optimized for spoken responses: short, direct, no Markdown, and no chain-of-thought.
 
 If you want to customize the prompt, keep the output requirement simple:
@@ -79,6 +82,14 @@ TTS_ARGS='["-m","{model}","-t","{text}","-o","{output}","-l","{language}"]'
 ```
 
 `/api/chat` falls back to an echo-style reply if the configured command fails or is unset.
+
+## Chat providers
+
+- The page has a `回复引擎` selector for `Codex` and `OpenCode`
+- `Codex` is the default provider
+- The selection is saved in local storage on the browser side
+- `CHAT_PROVIDER_DEFAULT` changes the server-side default if the browser has no saved choice
+- `CODEX_CHAT_COMMAND` and `OPENCODE_CHAT_COMMAND` can override the underlying CLI command arrays
 
 ## Whisper model
 

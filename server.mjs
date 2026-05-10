@@ -23,21 +23,57 @@ const CONFIG = {
   ttsBin: process.env.TTS_BIN || path.join(ROOT, 'qwen3-tts.cpp', 'build', 'qwen3-tts-cli'),
   ttsModel: process.env.TTS_MODEL || path.join(ROOT, 'qwen3-tts.cpp', 'models'),
   ttsArgs: parseJsonEnv('TTS_ARGS', null),
-  chatCommand: parseJsonEnv(
-    'CHAT_COMMAND',
-    [
-      'codex',
-      'exec',
-      '--ephemeral',
-      '--skip-git-repo-check',
-      '--sandbox',
-      'read-only',
-      '--output-last-message',
-      '{output}',
-      '-',
-    ]
-  ),
 };
+
+const CHAT_PROVIDERS = {
+  codex: {
+    label: 'Codex',
+    command: parseJsonEnv(
+      'CODEX_CHAT_COMMAND',
+      parseJsonEnv(
+        'CHAT_COMMAND',
+        [
+          'codex',
+          'exec',
+          '--ephemeral',
+          '--skip-git-repo-check',
+          '--sandbox',
+          'read-only',
+          '--output-last-message',
+          '{output}',
+          '-',
+        ]
+      )
+    ),
+  },
+  opencode: {
+    label: 'OpenCode',
+    command: parseJsonEnv(
+      'OPENCODE_CHAT_COMMAND',
+      [
+        'opencode',
+        'run',
+        '--pure',
+        '--format',
+        'default',
+        '--title',
+        'TalkingHead',
+        '{prompt}',
+      ]
+    ),
+  },
+};
+
+function normalizeChatProvider(value) {
+  const candidate = String(value || '').toLowerCase();
+  return Object.hasOwn(CHAT_PROVIDERS, candidate) ? candidate : 'codex';
+}
+
+const CHAT_PROVIDER_DEFAULT = normalizeChatProvider(process.env.CHAT_PROVIDER_DEFAULT || 'codex');
+
+function getChatProviderCommand(provider) {
+  return CHAT_PROVIDERS[normalizeChatProvider(provider)]?.command || CHAT_PROVIDERS.codex.command;
+}
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -67,12 +103,16 @@ function parseJsonEnv(name, fallback) {
 
 function getLocalIpAddresses() {
   const addrs = new Set(['127.0.0.1', 'localhost']);
-  for (const infos of Object.values(networkInterfaces())) {
-    for (const info of infos || []) {
-      if (info.family === 'IPv4' && !info.internal) {
-        addrs.add(info.address);
+  try {
+    for (const infos of Object.values(networkInterfaces())) {
+      for (const info of infos || []) {
+        if (info.family === 'IPv4' && !info.internal) {
+          addrs.add(info.address);
+        }
       }
     }
+  } catch (error) {
+    console.warn(`Unable to enumerate network interfaces for certificate SANs: ${error?.message || error}`);
   }
   return [...addrs];
 }
@@ -440,7 +480,11 @@ async function handleRequest(req, res) {
       whisperModel: CONFIG.whisperModel,
       ttsBin: CONFIG.ttsBin,
       ttsModel: CONFIG.ttsModel,
-      chatCommand: CONFIG.chatCommand,
+      chatProviderDefault: CHAT_PROVIDER_DEFAULT,
+      chatProviders: Object.entries(CHAT_PROVIDERS).map(([id, provider]) => ({
+        id,
+        label: provider.label,
+      })),
     });
     return;
   }
@@ -461,19 +505,27 @@ async function handleRequest(req, res) {
     try {
       const body = await readJson(req);
       const text = String(body.text || '').trim();
+      const provider = normalizeChatProvider(body.provider || CHAT_PROVIDER_DEFAULT);
       let reply = text ? `You said: ${text}` : 'I did not catch that.';
 
-      if (CONFIG.chatCommand && CONFIG.chatCommand.length) {
-        const outputPath = path.join(os.tmpdir(), `codex-chat-${Date.now()}-${Math.random().toString(16).slice(2)}.txt`);
+      const chatCommand = getChatProviderCommand(provider);
+      if (chatCommand && chatCommand.length) {
+        const outputPath = provider === 'codex'
+          ? path.join(os.tmpdir(), `codex-chat-${Date.now()}-${Math.random().toString(16).slice(2)}.txt`)
+          : null;
         try {
-          const command = applyTemplate(CONFIG.chatCommand, { text, output: outputPath });
+          const prompt = buildChatPrompt(text);
+          const command = applyTemplate(chatCommand, {
+            text,
+            prompt,
+            output: outputPath || '',
+          });
           const bin = command[0];
           const args = command.slice(1);
-          const prompt = buildChatPrompt(text);
-          const result = await runCommand(bin, args, { input: prompt });
+          const result = await runCommand(bin, args, provider === 'codex' ? { input: prompt } : {});
           if (result.code === 0) {
             let candidate = '';
-            if (await exists(outputPath)) {
+            if (outputPath && await exists(outputPath)) {
               candidate = await fs.readFile(outputPath, 'utf8');
             } else {
               candidate = result.stdout.toString('utf8') || result.stderr;
@@ -481,10 +533,13 @@ async function handleRequest(req, res) {
             candidate = cleanTranscript(candidate);
             if (candidate) reply = candidate;
           } else {
-            console.warn(`codex exec failed: ${result.stderr || result.stdout.toString('utf8') || `exit ${result.code}`}`);
+            const label = CHAT_PROVIDERS[provider]?.label || provider;
+            console.warn(`${label} chat failed: ${result.stderr || result.stdout.toString('utf8') || `exit ${result.code}`}`);
           }
         } finally {
-          await fs.rm(outputPath, { force: true });
+          if (outputPath) {
+            await fs.rm(outputPath, { force: true });
+          }
         }
       }
 

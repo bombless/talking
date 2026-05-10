@@ -48,12 +48,19 @@
         left: 24px;
         top: 24px;
         width: min(420px, calc(100vw - 48px));
+        max-height: calc(100vh - 48px);
+        max-height: calc(100dvh - 48px);
         padding: 18px;
         border: 1px solid var(--panel-border);
         border-radius: 20px;
         background: var(--panel);
         backdrop-filter: blur(18px);
         box-shadow: 0 24px 80px rgba(0, 0, 0, 0.36);
+        overflow-y: auto;
+        overflow-x: hidden;
+        overscroll-behavior: contain;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-gutter: stable;
       }
 
       .panel.collapsed {
@@ -228,9 +235,45 @@
 
       @media (max-width: 720px) {
         .panel {
-          left: 14px;
-          top: 14px;
-          width: calc(100vw - 28px);
+          left: 12px;
+          top: 12px;
+          width: calc(100vw - 24px);
+          max-height: calc(100vh - 24px);
+          max-height: calc(100dvh - 24px);
+          padding: 14px;
+          border-radius: 18px;
+        }
+
+        h1 {
+          font-size: 18px;
+        }
+
+        .sub {
+          font-size: 13px;
+          margin-bottom: 12px;
+        }
+
+        .row {
+          gap: 8px;
+        }
+
+        .stack {
+          gap: 8px;
+          margin-top: 12px;
+        }
+
+        .card {
+          padding: 10px 12px;
+          border-radius: 14px;
+        }
+
+        button {
+          padding: 9px 12px;
+        }
+
+        .panel .secondary,
+        .panel #collapseBtn {
+          padding: 8px 10px !important;
         }
       }
     </style>
@@ -281,6 +324,17 @@
             <div class="label">助手回复</div>
             <div id="reply" class="text">尚未生成。</div>
           </div>
+
+          <div class="card">
+            <div class="label">回复引擎</div>
+            <div class="row">
+              <select id="chatProvider" style="flex:1; min-width: 220px; padding: 10px 12px; border-radius: 12px; background: rgba(255,255,255,0.06); color: var(--text); border: 1px solid rgba(255,255,255,0.12);">
+                <option value="codex">Codex</option>
+                <option value="opencode">OpenCode</option>
+              </select>
+              <span class="pill" id="chatProviderHint">默认 Codex</span>
+            </div>
+          </div>
         </div>
 
         <div id="status" class="status">准备加载...</div>
@@ -306,6 +360,8 @@
       const stateTextEl = document.getElementById("stateText");
       const stateDotEl = document.getElementById("stateDot");
       const micDeviceEl = document.getElementById("micDevice");
+      const chatProviderEl = document.getElementById("chatProvider");
+      const chatProviderHintEl = document.getElementById("chatProviderHint");
       const panelEl = document.getElementById("panel");
       const collapseBtnEl = document.getElementById("collapseBtn");
       const panelToggleEl = document.getElementById("panelToggle");
@@ -331,6 +387,10 @@
       let conversationArmed = false;
       let pendingAutoRestart = false;
       let availableMicDevices = [];
+      let availableChatProviders = [
+        { id: "codex", label: "Codex" },
+        { id: "opencode", label: "OpenCode" },
+      ];
 
       function setStatus(message) {
         statusEl.textContent = message;
@@ -349,6 +409,16 @@
       function setMicStatus(message) {
         const current = micDeviceEl.options[micDeviceEl.selectedIndex]?.textContent || "默认设备";
         micDeviceEl.title = message || current;
+      }
+
+      function setChatProvider(provider, persist = true) {
+        const normalized = availableChatProviders.some((item) => item.id === provider) ? provider : "codex";
+        chatProviderEl.value = normalized;
+        const label = availableChatProviders.find((item) => item.id === normalized)?.label || normalized;
+        chatProviderHintEl.textContent = `当前 ${label}`;
+        if (persist) {
+          localStorage.setItem("talkinghead.chatProvider", normalized);
+        }
       }
 
       function setPanelCollapsed(collapsed) {
@@ -440,8 +510,19 @@
           const res = await fetch("/api/config");
           const data = await res.json();
           if (!res.ok) throw new Error(data?.error || "bridge unavailable");
+          if (Array.isArray(data.chatProviders) && data.chatProviders.length) {
+            availableChatProviders = data.chatProviders;
+            chatProviderEl.innerHTML = availableChatProviders
+              .map((item) => `<option value="${item.id}">${item.label}</option>`)
+              .join("");
+          }
+          const savedProvider = localStorage.getItem("talkinghead.chatProvider");
+          const provider = availableChatProviders.some((item) => item.id === savedProvider)
+            ? savedProvider
+            : data.chatProviderDefault || "codex";
+          setChatProvider(provider, false);
           setBridge(true, "桥接服务在线");
-          setStatus(`whisper: ${data.whisperBin}\nTTS: ${data.ttsBin}`);
+          setStatus(`whisper: ${data.whisperBin}\nTTS: ${data.ttsBin}\nChat: ${availableChatProviders.map((item) => item.label).join(" / ")}`);
         } catch (error) {
           setBridge(false, "桥接服务未检测");
           setStatus(`桥接服务不可用：${error?.message || error}`);
@@ -623,7 +704,7 @@
             return;
           }
 
-          const chat = await fetchJson("/api/chat", { text: transcript });
+          const chat = await fetchJson("/api/chat", { text: transcript, provider: chatProviderEl.value });
           const reply = String(chat.reply || "").trim();
           replyEl.textContent = reply || "（空）";
           if (!reply) {
@@ -751,6 +832,11 @@
 
       document.getElementById("clear").addEventListener("click", () => {
         clearTranscript();
+      });
+
+      chatProviderEl.addEventListener("change", () => {
+        setChatProvider(chatProviderEl.value, true);
+        setStatus(`已切换为 ${chatProviderHintEl.textContent.replace(/^当前\s*/, "")}。`);
       });
 
       document.getElementById("refreshMic").addEventListener("click", async () => {
