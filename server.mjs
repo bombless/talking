@@ -1,5 +1,6 @@
 import http from 'node:http';
 import https from 'node:https';
+import { createHash } from 'node:crypto';
 import { execFileSync, spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
@@ -23,6 +24,20 @@ const CONFIG = {
   ttsBin: process.env.TTS_BIN || path.join(ROOT, 'qwen3-tts.cpp', 'build', 'qwen3-tts-cli'),
   ttsModel: process.env.TTS_MODEL || path.join(ROOT, 'qwen3-tts.cpp', 'models'),
   ttsArgs: parseJsonEnv('TTS_ARGS', null),
+};
+
+const TTS_REFERENCE = {
+  sourceAudio: normalizeOptionalPath(process.env.TTS_REFERENCE_AUDIO || path.join(ROOT, 'demo', 'assets', 'love-10-20.wav')),
+  startSec: parseNumberEnv('TTS_REFERENCE_START', 10),
+  endSec: parseNumberEnv('TTS_REFERENCE_END', 20),
+  sampleRate: parseNumberEnv('TTS_REFERENCE_SAMPLE_RATE', 24000),
+  sourceIsTrimmed: parseBooleanEnv('TTS_REFERENCE_IS_TRIMMED', true),
+  cacheDir: process.env.TTS_REFERENCE_CACHE_DIR || path.join(os.tmpdir(), 'talkinghead-tts-reference'),
+  prepared: false,
+  preparing: null,
+  wavPath: '',
+  cacheKey: '',
+  error: '',
 };
 
 const CHAT_PROVIDERS = {
@@ -99,6 +114,45 @@ function parseJsonEnv(name, fallback) {
   } catch {
     return fallback;
   }
+}
+
+function parseNumberEnv(name, fallback) {
+  const raw = process.env[name];
+  if (raw === undefined || raw === null || raw === '') return fallback;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function parseBooleanEnv(name, fallback) {
+  const raw = process.env[name];
+  if (raw === undefined || raw === null || raw === '') return fallback;
+  const normalized = String(raw).trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  return fallback;
+}
+
+function normalizeOptionalPath(value) {
+  const raw = String(value || '').trim();
+  if (!raw || ['none', 'off', 'disabled'].includes(raw.toLowerCase())) {
+    return '';
+  }
+  return expandHomePath(raw);
+}
+
+function expandHomePath(filePath) {
+  const value = String(filePath || '').trim();
+  if (!value) return '';
+  if (value === '~') {
+    return os.homedir();
+  }
+  if (value.startsWith('~/')) {
+    return path.join(os.homedir(), value.slice(2));
+  }
+  if (value.startsWith('~\\')) {
+    return path.join(os.homedir(), value.slice(2));
+  }
+  return path.isAbsolute(value) ? value : path.resolve(ROOT, value);
 }
 
 function getLocalIpAddresses() {
@@ -250,6 +304,10 @@ function wavHeader(dataSize, sampleRate, channels = 1, bitsPerSample = 16) {
   return buffer;
 }
 
+function sha1Hex(text) {
+  return createHash('sha1').update(String(text)).digest('hex');
+}
+
 async function writeTempWav(pcmBuffer, sampleRate, prefix) {
   const file = path.join(os.tmpdir(), `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}.wav`);
   const wav = Buffer.concat([wavHeader(pcmBuffer.length, sampleRate), pcmBuffer]);
@@ -288,6 +346,82 @@ function runCommand(bin, args, options = {}) {
 
 async function ensureFileExists(filePath) {
   await fs.access(filePath);
+}
+
+async function prepareTtsReference() {
+  if (!TTS_REFERENCE.sourceAudio) {
+    return null;
+  }
+  if (!Number.isFinite(TTS_REFERENCE.startSec) || !Number.isFinite(TTS_REFERENCE.endSec) || TTS_REFERENCE.endSec <= TTS_REFERENCE.startSec) {
+    throw new Error(`Invalid TTS reference window: start=${TTS_REFERENCE.startSec}, end=${TTS_REFERENCE.endSec}`);
+  }
+  if (TTS_REFERENCE.prepared) {
+    return TTS_REFERENCE;
+  }
+  if (TTS_REFERENCE.preparing) {
+    return TTS_REFERENCE.preparing;
+  }
+
+  TTS_REFERENCE.preparing = (async () => {
+    await ensureFileExists(CONFIG.ttsBin);
+    await ensureFileExists(TTS_REFERENCE.sourceAudio);
+    await fs.mkdir(TTS_REFERENCE.cacheDir, { recursive: true });
+
+    const sourceStat = await fs.stat(TTS_REFERENCE.sourceAudio);
+    const durationSec = Math.max(0, TTS_REFERENCE.endSec - TTS_REFERENCE.startSec);
+    const isTrimmedWav = TTS_REFERENCE.sourceIsTrimmed && path.extname(TTS_REFERENCE.sourceAudio).toLowerCase() === '.wav';
+    const cacheSeed = [
+      TTS_REFERENCE.sourceAudio,
+      sourceStat.mtimeMs,
+      sourceStat.size,
+      TTS_REFERENCE.startSec,
+      durationSec,
+      TTS_REFERENCE.sampleRate,
+      TTS_REFERENCE.sourceIsTrimmed ? 'trimmed' : 'untrimmed',
+      CONFIG.ttsBin,
+      CONFIG.ttsModel,
+    ].join('|');
+    const cacheKey = sha1Hex(cacheSeed);
+    const wavPath = isTrimmedWav
+      ? TTS_REFERENCE.sourceAudio
+      : path.join(TTS_REFERENCE.cacheDir, `${cacheKey}.wav`);
+
+    if (!isTrimmedWav && !(await exists(wavPath))) {
+      const extractArgs = [
+        '-y',
+        '-i',
+        TTS_REFERENCE.sourceAudio,
+        '-ss',
+        String(TTS_REFERENCE.startSec),
+        '-t',
+        String(durationSec),
+        '-vn',
+        '-ac',
+        '1',
+        '-ar',
+        String(TTS_REFERENCE.sampleRate),
+        '-c:a',
+        'pcm_s16le',
+        wavPath,
+      ];
+      const extractResult = await runCommand('ffmpeg', extractArgs);
+      if (extractResult.code !== 0) {
+        throw new Error(`ffmpeg failed to extract TTS reference: ${extractResult.stderr || extractResult.stdout.toString('utf8') || `exit ${extractResult.code}`}`);
+      }
+    }
+
+    TTS_REFERENCE.prepared = true;
+    TTS_REFERENCE.cacheKey = cacheKey;
+    TTS_REFERENCE.wavPath = wavPath;
+    TTS_REFERENCE.error = '';
+    return TTS_REFERENCE;
+  })();
+
+  try {
+    return await TTS_REFERENCE.preparing;
+  } finally {
+    TTS_REFERENCE.preparing = null;
+  }
 }
 
 async function transcribeBuffer(pcmBuffer, sampleRate) {
@@ -335,8 +469,17 @@ async function synthesizeText(payload) {
 
   await ensureFileExists(CONFIG.ttsBin);
   const outputPath = path.join(os.tmpdir(), `qwen3-tts-${Date.now()}-${Math.random().toString(16).slice(2)}.wav`);
+  let reference = null;
+  try {
+    reference = await prepareTtsReference();
+  } catch (error) {
+    TTS_REFERENCE.error = error?.message || String(error);
+    console.warn(`TTS voice cloning unavailable: ${TTS_REFERENCE.error}`);
+  }
+
+  const baseArgs = CONFIG.ttsArgs || ['-m', '{model}', '-t', '{text}', '-o', '{output}', '-l', '{language}'];
   const args = applyTemplate(
-    CONFIG.ttsArgs || ['-m', '{model}', '-t', '{text}', '-o', '{output}', '-l', '{language}'],
+    baseArgs,
     {
       model: CONFIG.ttsModel,
       text,
@@ -344,8 +487,16 @@ async function synthesizeText(payload) {
       voice: payload?.voice?.name || payload?.voice || '',
       lang: payload?.voice?.languageCode || '',
       language: normalizeTtsLanguage(payload?.voice?.languageCode || payload?.lang || '', text),
+      referenceAudio: reference?.sourceAudio || TTS_REFERENCE.sourceAudio || '',
+      referenceWav: reference?.wavPath || '',
+      referenceStart: TTS_REFERENCE.startSec,
+      referenceEnd: TTS_REFERENCE.endSec,
     }
   );
+
+  if (reference?.wavPath && !args.some((item) => item === '-r' || item === '--reference')) {
+    args.push('-r', reference.wavPath);
+  }
 
   const result = await runCommand(CONFIG.ttsBin, args);
 
@@ -475,11 +626,28 @@ async function handleRequest(req, res) {
   }
 
   if (req.method === 'GET' && pathname === '/api/config') {
+    let referenceReady = false;
+    let referenceError = TTS_REFERENCE.error;
+    try {
+      referenceReady = Boolean(await prepareTtsReference());
+      referenceError = '';
+    } catch (error) {
+      referenceError = error?.message || String(error);
+    }
     sendJson(res, 200, {
       whisperBin: CONFIG.whisperBin,
       whisperModel: CONFIG.whisperModel,
       ttsBin: CONFIG.ttsBin,
       ttsModel: CONFIG.ttsModel,
+      ttsReference: {
+        sourceAudio: TTS_REFERENCE.sourceAudio,
+        startSec: TTS_REFERENCE.startSec,
+        endSec: TTS_REFERENCE.endSec,
+        sourceIsTrimmed: TTS_REFERENCE.sourceIsTrimmed,
+        ready: referenceReady,
+        cacheDir: TTS_REFERENCE.cacheDir,
+        error: referenceError,
+      },
       chatProviderDefault: CHAT_PROVIDER_DEFAULT,
       chatProviders: Object.entries(CHAT_PROVIDERS).map(([id, provider]) => ({
         id,
@@ -579,6 +747,17 @@ function readBinaryBody(req) {
 }
 
 async function main() {
+  try {
+    const reference = await prepareTtsReference();
+    if (reference) {
+      console.log(`TTS voice reference: ${reference.sourceAudio} [${reference.startSec}s-${reference.endSec}s]`);
+      console.log(`TTS voice reference cache: ${reference.wavPath}`);
+    }
+  } catch (error) {
+    TTS_REFERENCE.error = error?.message || String(error);
+    console.warn(`TTS voice cloning not ready: ${TTS_REFERENCE.error}`);
+  }
+
   const httpsOptions = await ensureHttpsCertificate();
 
   const httpsServer = https.createServer(httpsOptions, handleRequest);
@@ -588,6 +767,16 @@ async function main() {
     const location = `https://${hostname}:${HTTPS_PORT}${req.url || '/'}`;
     res.writeHead(301, { Location: location });
     res.end();
+  });
+
+  httpsServer.on('error', (error) => {
+    if (error?.code === 'EADDRINUSE') {
+      console.error(`HTTPS port ${HTTPS_PORT} is already in use.`);
+      process.exit(1);
+      return;
+    }
+    console.error(error);
+    process.exit(1);
   });
 
   httpServer.on('error', (error) => {

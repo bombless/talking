@@ -52,6 +52,12 @@ The bridge is configurable via environment variables:
 - `TTS_MODEL`
 - `TTS_ARGS`
 - `TTS_STDIN`
+- `TTS_REFERENCE_AUDIO` defaults to `demo/assets/love-10-20.wav`
+- `TTS_REFERENCE_START` defaults to `10`
+- `TTS_REFERENCE_END` defaults to `20`
+- `TTS_REFERENCE_SAMPLE_RATE` defaults to `24000`
+- `TTS_REFERENCE_IS_TRIMMED` defaults to `true`
+- `TTS_REFERENCE_CACHE_DIR` defaults to a temp directory
 - `CHAT_PROVIDER_DEFAULT`
 - `CHAT_COMMAND` for legacy Codex override
 - `CODEX_CHAT_COMMAND`
@@ -80,6 +86,13 @@ If your binaries need different flags, override the args with JSON arrays, for e
 WHISPER_ARGS='["-m","{model}","-f","{input}","-nt","-oj","-of","{output}","-l","{language}"]'
 TTS_ARGS='["-m","{model}","-t","{text}","-o","{output}","-l","{language}"]'
 ```
+
+By default, the TTS bridge tries to clone the voice from `demo/assets/love-10-20.wav` by:
+
+- using the committed WAV directly as the reference slice
+- falling back to `ffmpeg` extraction only when you point `TTS_REFERENCE_AUDIO` at another source file
+
+That WAV is the 10s to 20s slice from `~/love.mp3`, checked into the repo so the setup is reproducible. If you want to use a different sample, set `TTS_REFERENCE_AUDIO`, `TTS_REFERENCE_START`, `TTS_REFERENCE_END`, and optionally `TTS_REFERENCE_IS_TRIMMED=false`.
 
 `/api/chat` falls back to an echo-style reply if the configured command fails or is unset.
 
