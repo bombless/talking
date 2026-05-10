@@ -1,0 +1,770 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TalkingHead Local Voice Demo</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg-0: #070b16;
+        --bg-1: #0d1324;
+        --panel: rgba(12, 18, 30, 0.78);
+        --panel-border: rgba(255, 255, 255, 0.12);
+        --text: #eef2ff;
+        --muted: #9ca3af;
+        --accent: #7dd3fc;
+        --accent-2: #34d399;
+        --warn: #f59e0b;
+        --danger: #f87171;
+      }
+
+      html, body {
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        color: var(--text);
+        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background:
+          radial-gradient(circle at 20% 10%, rgba(125, 211, 252, 0.22), transparent 28%),
+          radial-gradient(circle at 80% 15%, rgba(52, 211, 153, 0.16), transparent 26%),
+          radial-gradient(circle at 60% 80%, rgba(245, 158, 11, 0.08), transparent 30%),
+          linear-gradient(180deg, var(--bg-0) 0%, var(--bg-1) 100%);
+      }
+
+      #app {
+        position: relative;
+        width: 100vw;
+        height: 100vh;
+      }
+
+      #avatar {
+        position: absolute;
+        inset: 0;
+      }
+
+      .panel {
+        position: absolute;
+        left: 24px;
+        top: 24px;
+        width: min(420px, calc(100vw - 48px));
+        padding: 18px;
+        border: 1px solid var(--panel-border);
+        border-radius: 20px;
+        background: var(--panel);
+        backdrop-filter: blur(18px);
+        box-shadow: 0 24px 80px rgba(0, 0, 0, 0.36);
+      }
+
+      .panel.collapsed {
+        width: 16px;
+        height: 16px;
+        padding: 0;
+        border-radius: 999px;
+        background: #ef4444;
+        border-color: rgba(255, 255, 255, 0.24);
+        box-shadow: 0 10px 25px rgba(239, 68, 68, 0.35);
+        overflow: hidden;
+      }
+
+      .panel-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 8px;
+      }
+
+      .panel.collapsed .panel-header,
+      .panel.collapsed .sub,
+      .panel.collapsed .row,
+      .panel.collapsed .stack,
+      .panel.collapsed .status,
+      .panel.collapsed .collapsed-indicator {
+        display: none;
+      }
+
+      .panel-toggle {
+        display: none;
+        position: absolute;
+        inset: 0;
+        width: 16px;
+        height: 16px;
+        margin: 0;
+        padding: 0;
+        border: 0;
+        border-radius: 999px;
+        background: #ef4444;
+        cursor: pointer;
+        z-index: 2;
+      }
+
+      .panel.collapsed .panel-toggle {
+        display: block;
+      }
+
+      .panel-toggle::after {
+        content: "";
+      }
+
+      .panel-toggle:hover {
+        filter: brightness(1.05);
+      }
+
+      .panel-toggle:focus-visible {
+        outline: 2px solid rgba(255, 255, 255, 0.8);
+        outline-offset: 2px;
+      }
+
+      .panel > *:not(.panel-toggle) {
+        position: relative;
+        z-index: 1;
+      }
+
+      h1 {
+        margin: 0 0 8px;
+        font-size: 22px;
+        line-height: 1.1;
+      }
+
+      .sub {
+        margin: 0 0 14px;
+        color: var(--muted);
+        font-size: 14px;
+        line-height: 1.5;
+      }
+
+      .row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+
+      .stack {
+        display: grid;
+        gap: 10px;
+        margin-top: 14px;
+      }
+
+      button {
+        appearance: none;
+        border: 0;
+        border-radius: 999px;
+        padding: 10px 14px;
+        font-weight: 700;
+        cursor: pointer;
+        color: #03121a;
+        background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      }
+
+      button.secondary {
+        color: var(--text);
+        background: rgba(255, 255, 255, 0.08);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+      }
+
+      button.danger {
+        color: #fff;
+        background: rgba(248, 113, 113, 0.18);
+        border: 1px solid rgba(248, 113, 113, 0.25);
+      }
+
+      .card {
+        padding: 12px 14px;
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+      }
+
+      .label {
+        margin-bottom: 6px;
+        color: var(--muted);
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+
+      .text {
+        white-space: pre-wrap;
+        line-height: 1.55;
+        font-size: 14px;
+      }
+
+      .status {
+        margin-top: 12px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 7px 10px;
+        border-radius: 999px;
+        font-size: 12px;
+        background: rgba(255, 255, 255, 0.06);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        color: var(--muted);
+      }
+
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--warn);
+        box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.15);
+      }
+
+      .dot.live {
+        background: var(--accent-2);
+        box-shadow: 0 0 0 4px rgba(52, 211, 153, 0.14);
+      }
+
+      .dot.speaking {
+        background: var(--accent);
+        box-shadow: 0 0 0 4px rgba(125, 211, 252, 0.14);
+      }
+
+      @media (max-width: 720px) {
+        .panel {
+          left: 14px;
+          top: 14px;
+          width: calc(100vw - 28px);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <div id="avatar"></div>
+      <div id="panel" class="panel">
+        <button id="panelToggle" class="panel-toggle" aria-label="展开面板" title="展开面板"></button>
+        <div class="panel-header">
+          <h1>本机数字人语音链路</h1>
+          <button id="collapseBtn" class="secondary" style="padding: 8px 12px;">收起</button>
+        </div>
+        <p class="sub">麦克风输入进 <code>whisper.cpp</code>，回复文本交给本地 TTS，再由 <code>TalkingHead</code> 做口型同步。</p>
+
+        <div class="row">
+          <span class="pill"><span id="stateDot" class="dot"></span><span id="stateText">待机</span></span>
+          <span class="pill" id="bridgeState">桥接服务未检测</span>
+        </div>
+
+        <div class="stack">
+          <div class="card">
+            <div class="label">麦克风设备</div>
+            <div class="row">
+              <select id="micDevice" style="flex:1; min-width: 220px; padding: 10px 12px; border-radius: 12px; background: rgba(255,255,255,0.06); color: var(--text); border: 1px solid rgba(255,255,255,0.12);">
+                <option value="">默认设备</option>
+              </select>
+              <button id="refreshMic" class="secondary">刷新设备</button>
+            </div>
+          </div>
+          <div class="row">
+            <button id="startVoice">开始对话</button>
+            <button id="stopVoice" class="danger">停止</button>
+            <button id="clear" class="secondary">清空</button>
+          </div>
+          <div class="row">
+            <button id="reload" class="secondary">重新加载头像</button>
+            <button id="full" class="secondary">全身视图</button>
+            <button id="head" class="secondary">头部视图</button>
+          </div>
+
+          <div class="card">
+            <div class="label">实时转写</div>
+            <div id="transcript" class="text">尚未开始。</div>
+          </div>
+
+          <div class="card">
+            <div class="label">助手回复</div>
+            <div id="reply" class="text">尚未生成。</div>
+          </div>
+        </div>
+
+        <div id="status" class="status">准备加载...</div>
+      </div>
+    </div>
+
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "/node_modules/three/build/three.module.js",
+          "three/addons/": "/node_modules/three/examples/jsm/",
+          "talkinghead": "/modules/talkinghead.mjs"
+        }
+      }
+    </script>
+    <script type="module">
+      import { TalkingHead } from "talkinghead";
+
+      const statusEl = document.getElementById("status");
+      const transcriptEl = document.getElementById("transcript");
+      const replyEl = document.getElementById("reply");
+      const bridgeStateEl = document.getElementById("bridgeState");
+      const stateTextEl = document.getElementById("stateText");
+      const stateDotEl = document.getElementById("stateDot");
+      const micDeviceEl = document.getElementById("micDevice");
+      const panelEl = document.getElementById("panel");
+      const collapseBtnEl = document.getElementById("collapseBtn");
+      const panelToggleEl = document.getElementById("panelToggle");
+      const avatarNode = document.getElementById("avatar");
+
+      const SAMPLE_RATE = 16000;
+      const PARTIAL_INTERVAL_MS = 1200;
+      const PRE_ROLL_SECONDS = 1.0;
+
+      let head = null;
+      let audioContext = null;
+      let micStream = null;
+      let micSource = null;
+      let analyser = null;
+      let processor = null;
+      let captureEnabled = false;
+      let turnActive = false;
+      let transcribeTimer = null;
+      let turnBuffer = [];
+      let preRollBuffer = [];
+      let preRollSampleCount = 0;
+      let speaking = false;
+      let conversationArmed = false;
+      let pendingAutoRestart = false;
+      let availableMicDevices = [];
+
+      function setStatus(message) {
+        statusEl.textContent = message;
+      }
+
+      function setMode(mode, label) {
+        stateTextEl.textContent = label;
+        stateDotEl.className = `dot ${mode || ""}`.trim();
+      }
+
+      function setBridge(ok, text) {
+        bridgeStateEl.textContent = text;
+        bridgeStateEl.style.color = ok ? "#a7f3d0" : "#fca5a5";
+      }
+
+      function setMicStatus(message) {
+        const current = micDeviceEl.options[micDeviceEl.selectedIndex]?.textContent || "默认设备";
+        micDeviceEl.title = message || current;
+      }
+
+      function setPanelCollapsed(collapsed) {
+        panelEl.classList.toggle("collapsed", collapsed);
+        panelEl.setAttribute("aria-expanded", collapsed ? "false" : "true");
+        panelToggleEl.setAttribute("aria-label", collapsed ? "展开面板" : "展开面板");
+        panelToggleEl.title = collapsed ? "展开面板" : "展开面板";
+      }
+
+      function downsampleBuffer(buffer, inputSampleRate, targetSampleRate) {
+        if (targetSampleRate === inputSampleRate) {
+          return Float32Array.from(buffer);
+        }
+
+        const ratio = inputSampleRate / targetSampleRate;
+        const newLength = Math.round(buffer.length / ratio);
+        const result = new Float32Array(newLength);
+        let offsetResult = 0;
+        let offsetBuffer = 0;
+
+        while (offsetResult < result.length) {
+          const nextOffsetBuffer = Math.round((offsetResult + 1) * ratio);
+          let accum = 0;
+          let count = 0;
+          for (let i = offsetBuffer; i < nextOffsetBuffer && i < buffer.length; i++) {
+            accum += buffer[i];
+            count++;
+          }
+          result[offsetResult] = count ? accum / count : 0;
+          offsetResult++;
+          offsetBuffer = nextOffsetBuffer;
+        }
+
+        return result;
+      }
+
+      function encodePcm16(buffer, inputSampleRate, targetSampleRate) {
+        const downsampled = downsampleBuffer(buffer, inputSampleRate, targetSampleRate);
+        const pcm = new Int16Array(downsampled.length);
+        for (let i = 0; i < downsampled.length; i++) {
+          const s = Math.max(-1, Math.min(1, downsampled[i]));
+          pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+        }
+        return pcm.buffer;
+      }
+
+      function bufferToFloatArray(chunks) {
+        const total = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+        const merged = new Float32Array(total);
+        let offset = 0;
+        for (const chunk of chunks) {
+          merged.set(chunk, offset);
+          offset += chunk.length;
+        }
+        return merged;
+      }
+
+      async function fetchJson(url, payload) {
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data?.error || `Request failed: ${res.status}`);
+        }
+        return data;
+      }
+
+      async function loadBridgeState() {
+        try {
+          const res = await fetch("/api/config");
+          const data = await res.json();
+          if (!res.ok) throw new Error(data?.error || "bridge unavailable");
+          setBridge(true, "桥接服务在线");
+          setStatus(`whisper: ${data.whisperBin}\nTTS: ${data.ttsBin}`);
+        } catch (error) {
+          setBridge(false, "桥接服务未检测");
+          setStatus(`桥接服务不可用：${error?.message || error}`);
+        }
+      }
+
+      async function loadAvatar() {
+        setStatus("正在初始化头像...");
+
+        if (!head) {
+          head = new TalkingHead(avatarNode, {
+            avatarMute: false,
+            cameraView: "full",
+            cameraRotateEnable: true,
+            cameraPanEnable: false,
+            cameraZoomEnable: false,
+            modelPixelRatio: Math.min(window.devicePixelRatio || 1, 1.5),
+            ttsEndpoint: "/api/tts",
+            ttsLang: "en-US",
+            ttsVoice: "local-qwen3-tts",
+            lipsyncLang: "en",
+          });
+        }
+
+        await head.showAvatar({
+          url: "/demo/assets/brunette.glb",
+          body: "F",
+          avatarMood: "neutral",
+          lipsyncLang: "en",
+          ttsLang: "en-US",
+          ttsVoice: "local-qwen3-tts",
+        });
+
+        setStatus("头像已加载。");
+      }
+
+      async function refreshMicDevices() {
+        availableMicDevices = [];
+        micDeviceEl.innerHTML = '<option value="">默认设备</option>';
+
+        if (!navigator.mediaDevices?.enumerateDevices) {
+          setMicStatus("当前浏览器不支持设备枚举");
+          return;
+        }
+
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        availableMicDevices = devices.filter((device) => device.kind === "audioinput");
+        for (const device of availableMicDevices) {
+          const option = document.createElement("option");
+          option.value = device.deviceId;
+          option.textContent = device.label || `麦克风 ${micDeviceEl.options.length}`;
+          micDeviceEl.appendChild(option);
+        }
+
+        if (!availableMicDevices.length) {
+          setMicStatus("未检测到麦克风设备");
+        } else {
+          setMicStatus(`检测到 ${availableMicDevices.length} 个麦克风设备`);
+        }
+      }
+
+      async function ensureAudio() {
+        if (audioContext) return;
+        audioContext = new AudioContext();
+        await audioContext.resume();
+
+        const deviceId = micDeviceEl.value;
+        const audioConstraints = {
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        };
+
+        if (deviceId) {
+          audioConstraints.deviceId = { exact: deviceId };
+        }
+
+        micStream = await navigator.mediaDevices.getUserMedia({
+          audio: audioConstraints,
+          video: false,
+        });
+
+        micSource = audioContext.createMediaStreamSource(micStream);
+        analyser = audioContext.createAnalyser();
+        analyser.fftSize = 512;
+        analyser.smoothingTimeConstant = 0.1;
+        micSource.connect(analyser);
+
+        processor = audioContext.createScriptProcessor(4096, 1, 1);
+        micSource.connect(processor);
+        processor.connect(audioContext.destination);
+        processor.onaudioprocess = (event) => {
+          const input = event.inputBuffer.getChannelData(0);
+          const output = event.outputBuffer.getChannelData(0);
+          output.fill(0);
+          if (!captureEnabled) return;
+
+          const chunk = new Float32Array(input.length);
+          chunk.set(input);
+          preRollBuffer.push(chunk);
+          preRollSampleCount += chunk.length;
+          const preRollLimit = Math.round(audioContext.sampleRate * PRE_ROLL_SECONDS);
+          while (preRollSampleCount > preRollLimit && preRollBuffer.length) {
+            preRollSampleCount -= preRollBuffer[0].length;
+            preRollBuffer.shift();
+          }
+
+          if (turnActive) {
+            turnBuffer.push(chunk);
+          }
+        };
+
+        if (head?.startListening) {
+          head.startListening(analyser, {}, (state) => {
+            if (state === "start") {
+              turnActive = true;
+              turnBuffer = preRollBuffer.slice();
+              transcribeTimer = window.setInterval(() => {
+                if (turnActive) {
+                  void transcribeTurn(false);
+                }
+              }, PARTIAL_INTERVAL_MS);
+              setMode("live", "正在聆听");
+              setStatus("检测到语音输入...");
+            }
+
+            if (state === "stop") {
+              void finalizeTurn();
+            }
+          });
+        }
+      }
+
+      async function transcribeTurn(final = false) {
+        if (!turnBuffer.length) return "";
+        const merged = bufferToFloatArray(turnBuffer);
+        const pcm = encodePcm16(merged, audioContext.sampleRate, SAMPLE_RATE);
+
+        const res = await fetch(`/api/transcribe?final=${final ? "1" : "0"}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/octet-stream", "X-Sample-Rate": String(SAMPLE_RATE) },
+          body: pcm,
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data?.error || `Transcribe failed: ${res.status}`);
+        }
+        return String(data.text || "").trim();
+      }
+
+      async function finalizeTurn() {
+        if (!turnActive) return;
+        turnActive = false;
+        if (transcribeTimer) {
+          window.clearInterval(transcribeTimer);
+          transcribeTimer = null;
+        }
+
+        try {
+          const transcript = await transcribeTurn(true);
+          transcriptEl.textContent = transcript || "（空）";
+          setStatus("正在生成回复...");
+          if (!transcript) {
+            setMode("", "待机");
+            return;
+          }
+
+          const chat = await fetchJson("/api/chat", { text: transcript });
+          const reply = String(chat.reply || "").trim();
+          replyEl.textContent = reply || "（空）";
+          if (!reply) {
+            setMode("", "待机");
+            return;
+          }
+
+          pendingAutoRestart = captureEnabled;
+          stopVoice(true);
+
+          speaking = true;
+          setMode("speaking", "正在播报");
+          setStatus("正在调用本地 TTS...");
+          await head.speakText(reply, {
+            avatarMood: "neutral",
+            ttsLang: "en-US",
+            ttsVoice: "local-qwen3-tts",
+          });
+
+          const restartDelay = Math.max(2500, reply.length * 70);
+          window.setTimeout(() => {
+            speaking = false;
+            if (pendingAutoRestart && !captureEnabled) {
+              pendingAutoRestart = false;
+              void startVoice();
+            } else if (captureEnabled) {
+              setMode("live", "重新聆听");
+              setStatus("可继续说话。");
+            } else {
+              setMode("", "待机");
+              setStatus("对话已停止。");
+            }
+          }, restartDelay);
+        } catch (error) {
+          console.error(error);
+          setStatus(`处理失败：${error?.message || error}`);
+          setMode("", "待机");
+        } finally {
+          turnBuffer = [];
+          preRollBuffer = [];
+          preRollSampleCount = 0;
+        }
+      }
+
+      async function startVoice() {
+        if (captureEnabled) return;
+        await ensureAudio();
+        captureEnabled = true;
+        pendingAutoRestart = false;
+        setMode("live", "开始监听");
+        setStatus("麦克风已开启。请说话。");
+      }
+
+      function stopVoice(silent = false) {
+        captureEnabled = false;
+        pendingAutoRestart = false;
+        turnActive = false;
+        speaking = false;
+        if (transcribeTimer) {
+          window.clearInterval(transcribeTimer);
+          transcribeTimer = null;
+        }
+        turnBuffer = [];
+        preRollBuffer = [];
+        preRollSampleCount = 0;
+        head?.stopListening?.();
+
+        if (processor) {
+          processor.disconnect();
+          processor.onaudioprocess = null;
+          processor = null;
+        }
+
+        if (micSource) {
+          micSource.disconnect();
+          micSource = null;
+        }
+
+        if (analyser) {
+          analyser.disconnect();
+          analyser = null;
+        }
+
+        if (micStream) {
+          micStream.getTracks().forEach((track) => track.stop());
+          micStream = null;
+        }
+
+        if (audioContext) {
+          void audioContext.close();
+          audioContext = null;
+        }
+
+        setMode("", "待机");
+        if (!silent) {
+          setStatus("已停止。");
+        }
+      }
+
+      function clearTranscript() {
+        transcriptEl.textContent = "尚未开始。";
+        replyEl.textContent = "尚未生成。";
+        setStatus("已清空文本。");
+      }
+
+      document.getElementById("startVoice").addEventListener("click", async () => {
+        try {
+          await startVoice();
+        } catch (error) {
+          console.error(error);
+          const message = String(error?.message || error || "");
+          if (/Requested device not found|NotFoundError/i.test(message)) {
+            setStatus("启动失败：浏览器没有找到可用麦克风。请先点击“刷新设备”，检查系统输入设备，或在下拉框里手动选择麦克风后重试。");
+          } else {
+            setStatus(`启动失败：${message}`);
+          }
+        }
+      });
+
+      document.getElementById("stopVoice").addEventListener("click", () => {
+        stopVoice(false);
+      });
+
+      document.getElementById("clear").addEventListener("click", () => {
+        clearTranscript();
+      });
+
+      document.getElementById("refreshMic").addEventListener("click", async () => {
+        try {
+          await refreshMicDevices();
+        } catch (error) {
+          console.error(error);
+          setStatus(`刷新麦克风失败：${error?.message || error}`);
+        }
+      });
+
+      micDeviceEl.addEventListener("change", () => {
+        setMicStatus("已选择麦克风");
+      });
+
+      collapseBtnEl.addEventListener("click", () => {
+        setPanelCollapsed(true);
+      });
+
+      panelToggleEl.addEventListener("click", () => {
+        setPanelCollapsed(false);
+      });
+
+      document.getElementById("reload").addEventListener("click", async () => {
+        await loadAvatar();
+      });
+
+      document.getElementById("full").addEventListener("click", () => {
+        head?.setView("full");
+      });
+
+      document.getElementById("head").addEventListener("click", () => {
+        head?.setView("head");
+      });
+
+      window.addEventListener("beforeunload", stopVoice);
+      window.addEventListener("resize", () => {
+        head?.resize?.();
+      });
+
+      await loadBridgeState();
+      await loadAvatar();
+      await refreshMicDevices();
+      setPanelCollapsed(false);
+      setMode("", "待机");
+    </script>
+  </body>
+</html>
