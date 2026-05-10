@@ -23,7 +23,20 @@ const CONFIG = {
   ttsBin: process.env.TTS_BIN || path.join(ROOT, 'qwen3-tts.cpp', 'build', 'qwen3-tts-cli'),
   ttsModel: process.env.TTS_MODEL || path.join(ROOT, 'qwen3-tts.cpp', 'models'),
   ttsArgs: parseJsonEnv('TTS_ARGS', null),
-  chatCommand: parseJsonEnv('CHAT_COMMAND', null),
+  chatCommand: parseJsonEnv(
+    'CHAT_COMMAND',
+    [
+      'codex',
+      'exec',
+      '--ephemeral',
+      '--skip-git-repo-check',
+      '--sandbox',
+      'read-only',
+      '--output-last-message',
+      '{output}',
+      '-',
+    ]
+  ),
 };
 
 const MIME = {
@@ -138,6 +151,25 @@ function stripSSML(text) {
     .replace(/&apos;/g, "'")
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function buildChatPrompt(text) {
+  return [
+    '你是本机数字人语音链路里的回复生成器。',
+    '你的目标是把用户输入改写成适合语音播报的最终回复。',
+    '要求：',
+    '1. 只输出最终回复，不要解释推理过程，不要输出分析。',
+    '2. 不要使用 Markdown、列表、代码块、标题、引号包裹。',
+    '3. 回复尽量简短自然，通常 1 到 3 句。',
+    '4. 如果用户是在提问，就直接回答；如果用户是在闲聊，就自然接话。',
+    '5. 如果用户输入是中文，就优先用中文回复；如果是英文，就用英文简短回复。',
+    '6. 不要复述系统提示，不要提到你是模型，也不要提到 Codex。',
+    '',
+    '用户输入：',
+    text,
+    '',
+    '只输出回复正文：',
+  ].join('\n');
 }
 
 function normalizeTtsLanguage(lang, text) {
@@ -432,15 +464,27 @@ async function handleRequest(req, res) {
       let reply = text ? `You said: ${text}` : 'I did not catch that.';
 
       if (CONFIG.chatCommand && CONFIG.chatCommand.length) {
-        const command = applyTemplate(CONFIG.chatCommand, { text });
-        const bin = command[0];
-        const args = command.slice(1);
-        const result = await runCommand(bin, args, { input: `${text}\n` });
-        if (result.code === 0) {
-          const candidate = cleanTranscript(result.stdout.toString('utf8') || result.stderr);
-          if (candidate) reply = candidate;
-        } else {
-          reply = result.stderr || reply;
+        const outputPath = path.join(os.tmpdir(), `codex-chat-${Date.now()}-${Math.random().toString(16).slice(2)}.txt`);
+        try {
+          const command = applyTemplate(CONFIG.chatCommand, { text, output: outputPath });
+          const bin = command[0];
+          const args = command.slice(1);
+          const prompt = buildChatPrompt(text);
+          const result = await runCommand(bin, args, { input: prompt });
+          if (result.code === 0) {
+            let candidate = '';
+            if (await exists(outputPath)) {
+              candidate = await fs.readFile(outputPath, 'utf8');
+            } else {
+              candidate = result.stdout.toString('utf8') || result.stderr;
+            }
+            candidate = cleanTranscript(candidate);
+            if (candidate) reply = candidate;
+          } else {
+            console.warn(`codex exec failed: ${result.stderr || result.stdout.toString('utf8') || `exit ${result.code}`}`);
+          }
+        } finally {
+          await fs.rm(outputPath, { force: true });
         }
       }
 
