@@ -63,6 +63,23 @@ The bridge is configurable via environment variables:
 - `CODEX_CHAT_COMMAND`
 - `OPENCODE_CHAT_COMMAND`
 
+## Whisper CUDA build
+
+The bridge launches `./whisper.cpp/build/bin/whisper-cli` by default. To make STT run on an NVIDIA GPU, build that binary with `GGML_CUDA` enabled:
+
+```bash
+npm run build:whisper-cuda
+```
+
+That command configures `whisper.cpp` with `-DGGML_CUDA=ON`, then builds `whisper-cli` into `whisper.cpp/build/bin/whisper-cli`.
+If you need a specific CUDA architecture, set `CUDA_ARCHITECTURES`, for example:
+
+```bash
+CUDA_ARCHITECTURES=86 npm run build:whisper-cuda
+```
+
+Once built that way, the server will use GPU inference automatically unless you pass `-ng` in `WHISPER_ARGS`.
+
 By default, `/api/chat` uses `codex exec` and writes the final reply to a temporary file. You can switch to `opencode` in the page UI.
 The prompt is optimized for spoken responses: short, direct, no Markdown, and no chain-of-thought.
 
